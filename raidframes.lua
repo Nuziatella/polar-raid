@@ -1,6 +1,8 @@
 local api = require("api")
 
 local Utils = nil
+local Runtime = nil
+local Compat = nil
 do
     local ok, mod = pcall(require, "polar-raid/overlay_utils")
     if ok then
@@ -9,6 +11,28 @@ do
         ok, mod = pcall(require, "polar-raid.overlay_utils")
         if ok then
             Utils = mod
+        end
+    end
+end
+do
+    local ok, mod = pcall(require, "polar-raid/runtime")
+    if ok then
+        Runtime = mod
+    else
+        ok, mod = pcall(require, "polar-raid.runtime")
+        if ok then
+            Runtime = mod
+        end
+    end
+end
+do
+    local ok, mod = pcall(require, "polar-raid/compat")
+    if ok then
+        Compat = mod
+    else
+        ok, mod = pcall(require, "polar-raid.compat")
+        if ok then
+            Compat = mod
         end
     end
 end
@@ -149,16 +173,10 @@ local function NowMs()
 end
 
 local function SafeGetStockRaidManager()
-    if ADDON == nil or ADDON.GetContent == nil or UIC == nil or UIC.RAID_MANAGER == nil then
+    if Runtime == nil or UIC == nil or UIC.RAID_MANAGER == nil then
         return nil
     end
-    local ok, res = pcall(function()
-        return ADDON:GetContent(UIC.RAID_MANAGER)
-    end)
-    if ok then
-        return res
-    end
-    return nil
+    return Runtime.GetStockContent(UIC.RAID_MANAGER)
 end
 
 local function SafeWidgetGetText(widget)
@@ -405,11 +423,9 @@ local function GetNameFromStockRoster(unit)
 
     local idName = nil
     pcall(function()
-        if api.Unit ~= nil and api.Unit.GetUnitId ~= nil then
-            local uid = api.Unit:GetUnitId(unit)
-            if uid ~= nil and STOCK_NAME_CACHE.id_map ~= nil then
-                idName = STOCK_NAME_CACHE.id_map[tostring(uid)]
-            end
+        local uid = Runtime ~= nil and Runtime.GetUnitId(unit) or nil
+        if uid ~= nil and STOCK_NAME_CACHE.id_map ~= nil then
+            idName = STOCK_NAME_CACHE.id_map[tostring(uid)]
         end
     end)
     if idName ~= nil and tostring(idName) ~= "" then
@@ -424,11 +440,9 @@ local function GetNameFromStockRoster(unit)
 
     idName = nil
     pcall(function()
-        if api.Unit ~= nil and api.Unit.GetUnitId ~= nil then
-            local uid = api.Unit:GetUnitId(unit)
-            if uid ~= nil and STOCK_NAME_CACHE.id_map ~= nil then
-                idName = STOCK_NAME_CACHE.id_map[tostring(uid)]
-            end
+        local uid = Runtime ~= nil and Runtime.GetUnitId(unit) or nil
+        if uid ~= nil and STOCK_NAME_CACHE.id_map ~= nil then
+            idName = STOCK_NAME_CACHE.id_map[tostring(uid)]
         end
     end)
     if idName ~= nil and tostring(idName) ~= "" then
@@ -551,10 +565,8 @@ local function SafeGetUnitNameById(id)
     end
 
     for _, candidate in ipairs(BuildUnitIdCandidates(id)) do
-        local ok, res = pcall(function()
-            return api.Unit:GetUnitNameById(candidate)
-        end)
-        if ok and res ~= nil and tostring(res) ~= "" then
+        local res = Runtime ~= nil and Runtime.GetUnitNameById(candidate) or nil
+        if res ~= nil and tostring(res) ~= "" then
             return res
         end
     end
@@ -1221,6 +1233,8 @@ local function EnsureFrame(container, unit)
     end)
     frame.eventWindow = eventWindow
     frame.__polar_hovered = false
+    frame.__polar_unit_id = nil
+    frame.__polar_stock_member = nil
     frame.__polar_cached_name = nil
     frame.__polar_cached_id = nil
     frame.__polar_meta = nil
@@ -1888,12 +1902,12 @@ local function TryHideStockRaidFrames(cfg)
     end
     RaidFrames.tried_hide_stock = true
 
-    if ADDON == nil or ADDON.GetContent == nil or UIC == nil or UIC.RAID_MANAGER == nil then
+    if Runtime == nil or UIC == nil or UIC.RAID_MANAGER == nil then
         return
     end
 
     pcall(function()
-        local rm = ADDON:GetContent(UIC.RAID_MANAGER)
+        local rm = Runtime.GetStockContent(UIC.RAID_MANAGER)
         if rm == nil then
             return
         end
@@ -2094,12 +2108,20 @@ local function UpdateOne(unit, idx, settings, updateFlags)
         frame.__polar_last_anchor_y = y
     end
 
-    local id = nil
-    pcall(function()
-        if api.Unit ~= nil and api.Unit.GetUnitId ~= nil then
-            id = api.Unit:GetUnitId(unit)
-        end
-    end)
+    local id = frame.__polar_unit_id
+    local shouldRefreshIdentity = flags.update_roster == true
+        or flags.update_metadata == true
+        or type(frame.__polar_meta) ~= "table"
+        or frame.__polar_unit_id == nil
+    if shouldRefreshIdentity then
+        id = nil
+        pcall(function()
+            if api.Unit ~= nil and api.Unit.GetUnitId ~= nil then
+                id = api.Unit:GetUnitId(unit)
+            end
+        end)
+        frame.__polar_unit_id = id
+    end
     local idStr = id ~= nil and tostring(id) or tostring(unit)
     local stableCacheKey = nil
     if id ~= nil then
@@ -2107,10 +2129,25 @@ local function UpdateOne(unit, idx, settings, updateFlags)
     end
     local cacheKey = stableCacheKey or tostring(unit)
 
-    local name = LookupNameFromStockCache(unit, id)
-    local stockMember = GetStockMember(unit, id)
+    local name = nil
+    local stockMember = nil
+    if shouldRefreshIdentity then
+        name = LookupNameFromStockCache(unit, id)
+        stockMember = GetStockMember(unit, id)
+        frame.__polar_stock_member = stockMember
+    else
+        local meta = frame.__polar_meta or {}
+        if tostring(meta.name or "") ~= "" then
+            name = tostring(meta.name)
+        elseif stableCacheKey ~= nil and frame.__polar_cached_name ~= nil and frame.__polar_cached_id == stableCacheKey then
+            name = tostring(frame.__polar_cached_name)
+        end
+        stockMember = frame.__polar_stock_member
+    end
 
     if string.match(tostring(unit or ""), "^team%d+$") and type(stockMember) ~= "table" and (name == nil or tostring(name) == "") then
+        frame.__polar_unit_id = nil
+        frame.__polar_stock_member = nil
         frame.__polar_cached_id = nil
         frame.__polar_cached_name = nil
         frame.__polar_meta = nil
@@ -2122,6 +2159,7 @@ local function UpdateOne(unit, idx, settings, updateFlags)
     local wantRole = cfg.show_role_prefix ~= false or (cfg.show_role_badge and true or false)
     local wantClassIcon = cfg.show_class_icon ~= false
     local refreshMetadata = flags.update_metadata == true
+        or flags.update_roster == true
         or type(frame.__polar_meta) ~= "table"
         or frame.__polar_meta_cache_key ~= cacheKey
 
@@ -2234,10 +2272,9 @@ local function UpdateOne(unit, idx, settings, updateFlags)
 
         if name == nil or tostring(name) == "" then
             pcall(function()
-                if api.Unit ~= nil and api.Unit.GetUnitId ~= nil then
-                    local playerId = api.Unit:GetUnitId("player")
-                    if playerId ~= nil and tostring(playerId) == idStr then
-                        name = api.Unit:GetUnitNameById(tostring(playerId))
+                local playerId = Runtime ~= nil and Runtime.GetUnitId("player") or nil
+                if playerId ~= nil and tostring(playerId) == idStr then
+                        name = Runtime ~= nil and Runtime.GetUnitNameById(tostring(playerId)) or nil
                         if (name == nil or tostring(name) == "") and api.Unit.UnitInfo ~= nil then
                             local pinfo = api.Unit:UnitInfo("player")
                             if type(pinfo) == "table" then
@@ -2288,6 +2325,7 @@ local function UpdateOne(unit, idx, settings, updateFlags)
     end
 
     if name == nil or tostring(name) == "" then
+        frame.__polar_stock_member = nil
         SafeShow(frame, false)
         return false
     end
@@ -2547,11 +2585,12 @@ end
 
 RaidFrames.Init = function(settings)
     RaidFrames.settings = settings
+    if Compat ~= nil then
+        Compat.Probe(false)
+    end
 
-    if ADDON ~= nil and ADDON.GetContent ~= nil and UIC ~= nil and UIC.TARGET_UNITFRAME ~= nil then
-        pcall(function()
-            RaidFrames.target_unitframe = ADDON:GetContent(UIC.TARGET_UNITFRAME)
-        end)
+    if Runtime ~= nil and UIC ~= nil and UIC.TARGET_UNITFRAME ~= nil then
+        RaidFrames.target_unitframe = Runtime.GetStockContent(UIC.TARGET_UNITFRAME)
     end
 end
 
@@ -2613,9 +2652,7 @@ RaidFrames.OnUpdate = function(settings, updateFlags)
     if flags.update_target == true or RaidFrames.current_target_id == nil then
         RaidFrames.current_target_id = nil
         pcall(function()
-            if api.Unit ~= nil and api.Unit.GetUnitId ~= nil then
-                RaidFrames.current_target_id = api.Unit:GetUnitId("target")
-            end
+            RaidFrames.current_target_id = Runtime ~= nil and Runtime.GetUnitId("target") or nil
         end)
     end
 

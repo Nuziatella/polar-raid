@@ -13,6 +13,7 @@ local function loadModule(name)
 end
 
 local Shared = loadModule("shared")
+local Compat = loadModule("compat")
 
 local SettingsUi = {
     button = nil,
@@ -142,6 +143,7 @@ local function refreshControls()
     local settings = Shared.GetSettings()
     local raid = settings.raidframes
     local style = settings.style
+    local runtimeLines = Compat ~= nil and Compat.GetRuntimeLines() or nil
     SettingsUi.controls.enabled:SetChecked(settings.enabled)
     SettingsUi.controls.raid_enabled:SetChecked(raid.enabled)
     SettingsUi.controls.hide_stock:SetChecked(raid.hide_stock)
@@ -162,6 +164,9 @@ local function refreshControls()
     safeSetText(SettingsUi.controls.layout, tostring(raid.layout_mode or "party_columns"))
     safeSetText(SettingsUi.controls.bar_style_mode, tostring(raid.bar_style_mode or "shared"))
     safeSetText(SettingsUi.controls.hp_texture_mode, tostring(style.hp_texture_mode or "stock"))
+    safeSetText(SettingsUi.controls.runtime_line_1, runtimeLines ~= nil and runtimeLines[1] or "")
+    safeSetText(SettingsUi.controls.runtime_line_2, runtimeLines ~= nil and runtimeLines[2] or "")
+    safeSetText(SettingsUi.controls.runtime_status, Compat ~= nil and Compat.GetStatusText() or "")
 end
 
 local function collectSettings()
@@ -215,8 +220,11 @@ local function ensureWindow()
     end
 
     createLabel("polarRaidHint", wnd, "Standalone raid frames. Apply updates live; Save persists changes.", 24, 46, 12, 450)
+    SettingsUi.controls.runtime_line_1 = createLabel("polarRaidRuntimeLine1", wnd, "", 24, 62, 12, 450)
+    SettingsUi.controls.runtime_line_2 = createLabel("polarRaidRuntimeLine2", wnd, "", 24, 78, 12, 450)
+    SettingsUi.controls.runtime_status = createLabel("polarRaidRuntimeStatus", wnd, "", 24, 94, 12, 450)
 
-    local y = 86
+    local y = 124
     createLabel("polarRaidSectionToggles", wnd, "Toggles", 24, y, 15, 120)
     y = y + 26
     SettingsUi.controls.enabled = createCheckbox("polarRaidEnabled", wnd, "Addon enabled", 24, y); y = y + 30

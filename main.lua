@@ -15,11 +15,13 @@ end
 local Shared = loadModule("shared")
 local RaidFrames = loadModule("raidframes")
 local SettingsUi = loadModule("settings_ui")
+local Runtime = loadModule("runtime")
+local Compat = loadModule("compat")
 
 local addon = {
     name = "Polar Raid",
     author = "Nuzi",
-    version = "1.1.1",
+    version = "1.1.3",
     desc = "Custom raid frames"
 }
 
@@ -28,6 +30,13 @@ local metadataElapsedMs = 0
 local rosterElapsedMs = 0
 local rosterForceElapsedMs = 0
 
+local UPDATE_INTERVALS = {
+    vitals_ms = 100,
+    metadata_ms = 900,
+    roster_ms = 500,
+    force_roster_ms = 2000
+}
+
 local function logInfo(message)
     if api.Log ~= nil and api.Log.Info ~= nil then
         api.Log:Info("[Polar Raid] " .. tostring(message or ""))
@@ -35,7 +44,27 @@ local function logInfo(message)
 end
 
 local function modulesReady()
-    return Shared ~= nil and RaidFrames ~= nil and SettingsUi ~= nil
+    return Shared ~= nil and RaidFrames ~= nil and SettingsUi ~= nil and Runtime ~= nil and Compat ~= nil
+end
+
+local function logRuntimeSummary()
+    local runtime = Compat.Get()
+    local caps = runtime.caps or {}
+    logInfo(string.format(
+        "Runtime raidframes=%s sliders=%s raid_manager=%s target_frame=%s",
+        caps.raidframes_supported and "yes" or "no",
+        caps.slider_factory and "yes" or "no",
+        caps.stock_raid_manager and "yes" or "no",
+        caps.stock_target_frame and "yes" or "no"
+    ))
+    for _, warning in ipairs(runtime.warnings or {}) do
+        logInfo(warning)
+    end
+    for _, blocker in ipairs(runtime.blockers or {}) do
+        if api.Log ~= nil and api.Log.Err ~= nil then
+            api.Log:Err("[Polar Raid] " .. tostring(blocker))
+        end
+    end
 end
 
 local function applyAll()
@@ -101,11 +130,11 @@ local function onUpdate(dt)
     rosterElapsedMs = rosterElapsedMs + delta
     rosterForceElapsedMs = rosterForceElapsedMs + delta
 
-    local updateVitals = vitalsElapsedMs >= 100
-    local updateMetadata = metadataElapsedMs >= 400
-    local updateRoster = rosterElapsedMs >= 250
-    local forceRoster = rosterForceElapsedMs >= 1000
-    local updateTarget = updateVitals or updateMetadata
+    local updateVitals = vitalsElapsedMs >= UPDATE_INTERVALS.vitals_ms
+    local updateMetadata = metadataElapsedMs >= UPDATE_INTERVALS.metadata_ms
+    local updateRoster = rosterElapsedMs >= UPDATE_INTERVALS.roster_ms
+    local forceRoster = rosterForceElapsedMs >= UPDATE_INTERVALS.force_roster_ms
+    local updateTarget = updateVitals
 
     if not updateVitals and not updateMetadata and not updateRoster then
         return
@@ -142,6 +171,7 @@ local function onUiReloaded()
     metadataElapsedMs = 0
     rosterElapsedMs = 0
     rosterForceElapsedMs = 0
+    Compat.Probe(true)
     RaidFrames.Unload()
     SettingsUi.Unload()
     RaidFrames.Init(Shared.GetSettings())
@@ -152,12 +182,7 @@ end
 
 local function onChatMessage(_, _, _, senderName, message)
     local raw = tostring(message or "")
-    local playerName = nil
-    if api.Unit ~= nil and api.Unit.GetUnitName ~= nil then
-        pcall(function()
-            playerName = api.Unit:GetUnitName("player")
-        end)
-    end
+    local playerName = Runtime.GetPlayerName()
     if playerName ~= nil and senderName ~= nil and tostring(senderName) ~= "" and tostring(senderName) ~= tostring(playerName) then
         return
     end
@@ -174,6 +199,8 @@ local function onLoad()
         return
     end
     Shared.LoadSettings()
+    Compat.Probe(true)
+    logRuntimeSummary()
     RaidFrames.Init(Shared.GetSettings())
     RaidFrames.SetEnabled(Shared.GetSettings().enabled)
     SettingsUi.Init(buildActions())
